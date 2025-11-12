@@ -90,6 +90,11 @@ reveal_plan = []
 reveal_step_index = 0
 reveal_step_started = 0
 
+# >>> NEW: constant feedback duration + dedicated timer
+FEEDBACK_DURATION_MS = 1000
+feedback_started = 0
+# <<< NEW
+
 # -------------------- GRID LAYOUT --------------------
 def build_grid_rects(rows, cols):
     area = pygame.Rect(50, 120, WIDTH-100, HEIGHT-180)
@@ -195,15 +200,15 @@ def make_reveal_plan(rows, cols, targets, level_index):
         for block in sections:
             part = set([rc for rc in block if rc in targets])
             if part:
-                plan.append({"cells": part, "time": 320})
+                plan.append({"cells": part, "time": 300})
         if not plan:
-            plan.append({"cells": set(targets), "time": 800})
+            plan.append({"cells": set(targets), "time": 700})
     elif mode == "snake":
         for r in range(rows):
             cols_range = range(cols) if r % 2 == 0 else range(cols-1, -1, -1)
             for c in cols_range:
                 if (r,c) in targets:
-                    plan.append({"cells": {(r,c)}, "time": 120})
+                    plan.append({"cells": {(r,c)}, "time": 300})
         if not plan:
             plan.append({"cells": set(targets), "time": 700})
     return plan
@@ -212,6 +217,7 @@ def make_reveal_plan(rows, cols, targets, level_index):
 def build_round():
     global rows, cols, grid_rects, targets, picks, feedback
     global reveal_plan, reveal_step_index, reveal_step_started, state
+    global feedback_started  # NEW
 
     rows, cols = LEVEL_SHAPES[level_index]
     grid_rects = build_grid_rects(rows, cols)
@@ -225,6 +231,7 @@ def build_round():
     reveal_plan = make_reveal_plan(rows, cols, targets, level_index)
     reveal_step_index = 0
     reveal_step_started = pygame.time.get_ticks()
+    feedback_started = 0  # NEW: reset feedback timer
     state = "reveal"
 
 def reset_all():
@@ -271,29 +278,40 @@ def draw_board(surface, lit_cells=None):
 
 # -------------------- CHECK ANSWER --------------------
 def check_answer():
-    global score, mistakes, state
+    global score, mistakes, state, feedback_started
+    # sets
     correct = targets & picks
     wrong_picked = picks - targets
     missed = targets - picks
+
+    # --- build feedback colors ---
     feedback.clear()
     for rc in correct:
         feedback[rc] = "correct"
-    for rc in wrong_picked | missed:
+    for rc in wrong_picked:
         feedback[rc] = "wrong"
-    if wrong_picked or missed:
+    for rc in missed:
+        feedback[rc] = "wrong"
+
+    # --- STRICT correctness: must match exactly ---
+    is_perfect = (picks == targets)
+
+    if is_perfect:
+        gain = len(targets) + (level_index + 1) * 2
+        score += gain
+        state = "feedback"
+        feedback_started = pygame.time.get_ticks()
+    else:
         mistakes += 1
         if mistakes >= 4:
             state = "gameover"
         else:
             state = "feedback"
-    else:
-        gain = len(targets) + (level_index+1)*2
-        score += gain
-        state = "feedback"
+            feedback_started = pygame.time.get_ticks()
 
 # -------------------- MAIN --------------------
 def main():
-    global state, reveal_step_index, reveal_step_started, level_index
+    global state, reveal_step_index, reveal_step_started, level_index, feedback_started  # NEW
     reset_all()
     running = True
     while running:
@@ -345,16 +363,17 @@ def main():
 
         elif state == "feedback":
             draw_board(game_surface)
-            if reveal_step_started == 0:
-                reveal_step_started = pygame.time.get_ticks()
-            if pygame.time.get_ticks() - reveal_step_started > 3500:
-                reveal_step_started = 0
+            # >>> constant feedback duration
+            if feedback_started == 0:
+                feedback_started = pygame.time.get_ticks()
+            if pygame.time.get_ticks() - feedback_started > FEEDBACK_DURATION_MS:
+                feedback_started = 0
                 if mistakes >= 4:
                     state = "gameover"
                 else:
                     any_wrong = any(v == "wrong" for v in feedback.values())
                     if not any_wrong:
-                        # ✅ NEW: Show congratulations screen if final level is cleared
+                        # final level congrats
                         if level_index == len(LEVEL_SHAPES)-1:
                             state = "congrats"
                         elif level_index < len(LEVEL_SHAPES)-1:
@@ -375,7 +394,7 @@ def main():
         # 🎉 NEW: Congratulations screen
         elif state == "congrats":
             draw_board(game_surface)
-            msg1 = font_big.render("🎉 Congratulations! 🎉", True, GREEN)
+            msg1 = font_big.render("Congratulations!", True, GREEN)
             msg2 = font_med.render("You completed all 5 levels!", True, WHITE)
             msg3 = font_med.render("Press SPACE to restart", True, ACCENT)
             game_surface.blit(msg1, msg1.get_rect(center=(WIDTH//2, HEIGHT//2 - 20)))
