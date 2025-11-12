@@ -45,17 +45,14 @@ PICK_FALLBACK = (42, 108, 122)
 CORRECT = (40, 110, 70)
 WRONG = (225, 0, 0)
 
-# Levels -> rows, cols (4, 8, 12, 16, 20 squares)
 LEVEL_SHAPES = [(2,2), (2,4), (3,4), (4,4), (4,5)]
-# Reveal time gets shorter each level (ms)
 LEVEL_REVEAL_TIME = [2500, 1800, 1200, 800, 600]
-# Pattern sizes (min, max by level)
 PATTERN_SIZES = [(2,4), (3,6), (5,8), (6,10), (8,12)]
 
 # -------------------- SELECTION IMAGE --------------------
-SELECT_IMAGE_PATH = "ryuzy.png"  # put your image file here
+SELECT_IMAGE_PATH = "ryuzy.png"
 select_img_original = None
-select_img_scaled = None  # updated per level/cell size
+select_img_scaled = None
 
 def try_load_select_image():
     global select_img_original
@@ -70,39 +67,31 @@ def try_load_select_image():
         select_img_original = None
 
 def rescale_select_image(cell_size):
-    """Scale selection image to exactly fill a cell (keeps alpha)."""
     global select_img_scaled
     if select_img_original is not None:
         select_img_scaled = pygame.transform.smoothscale(select_img_original, (cell_size, cell_size))
     else:
         select_img_scaled = None
 
-# Try to load once at start
 try_load_select_image()
 
 # -------------------- SIMPLE STATE --------------------
-level_index = 0     # 0..4
+level_index = 0
 score = 0
-mistakes = 0        # one life: first mistake allowed, second = reset
+mistakes = 0
+state = "reveal"  # NEW state added later: "congrats"
 
-# Game state strings: "reveal", "input", "feedback", "gameover"
-state = "reveal"
-
-# Grid info for current level
 rows, cols = LEVEL_SHAPES[level_index]
-grid_rects = []         # list of pygame.Rect for each cell (in game-surface coords)
-targets = set()         # set of (r,c) to memorize
-picks = set()           # player's selected cells
-feedback = {}           # (r,c) -> "correct"/"wrong" after submit
-
-# Reveal plan: simple steps like [ {"cells": set(...), "time": 500}, ... ]
+grid_rects = []
+targets = set()
+picks = set()
+feedback = {}
 reveal_plan = []
 reveal_step_index = 0
 reveal_step_started = 0
 
 # -------------------- GRID LAYOUT --------------------
 def build_grid_rects(rows, cols):
-    # draw area inside the GAME SURFACE (not the photo)
     area = pygame.Rect(50, 120, WIDTH-100, HEIGHT-180)
     gap = 8
     max_w = (area.width - gap*(cols-1)) // cols
@@ -112,7 +101,6 @@ def build_grid_rects(rows, cols):
     total_h = rows*size + gap*(rows-1)
     start_x = area.x + (area.width - total_w)//2
     start_y = area.y + (area.height - total_h)//2
-
     rects = []
     for r in range(rows):
         for c in range(cols):
@@ -174,7 +162,7 @@ def pick_targets(rows, cols, level_index):
     else:
         return cluster_pattern(rows, cols, k)
 
-# -------------------- REVEAL PLANS (SIMPLE) --------------------
+# -------------------- REVEAL PLANS --------------------
 def make_reveal_plan(rows, cols, targets, level_index):
     mode = random.choice(["full", "sides", "sections4", "snake"])
     plan = []
@@ -218,7 +206,6 @@ def make_reveal_plan(rows, cols, targets, level_index):
                     plan.append({"cells": {(r,c)}, "time": 120})
         if not plan:
             plan.append({"cells": set(targets), "time": 700})
-
     return plan
 
 # -------------------- LEVEL / ROUND SETUP --------------------
@@ -257,7 +244,7 @@ def draw_hud(surface):
 
     info1 = font_med.render(f"Level: {level_index+1}/5", True, ACCENT)
     info2 = font_med.render(f"Score: {score}", True, WHITE)
-    life_left = 1 - mistakes
+    life_left = 3 - mistakes
     life_text = font_med.render(f"Lives: {max(0, life_left)}", True, GREEN if life_left>=1 else RED)
     surface.blit(info1, (top.right-260, top.y+12))
     surface.blit(info2, (top.right-260, top.y+38))
@@ -269,36 +256,18 @@ def draw_board(surface, lit_cells=None):
     for i, rect in enumerate(grid_rects):
         r = i // cols
         c = i % cols
-
         color = IDLE
         if state == "reveal" and (r,c) in lit_cells:
             color = REVEAL
         elif state == "feedback" and (r,c) in feedback:
             color = CORRECT if feedback[(r,c)] == "correct" else WRONG
-
         pygame.draw.rect(surface, color, rect, border_radius=8)
         pygame.draw.rect(surface, (255,255,255,40), rect, 1, border_radius=8)
-
         if state in ("input", "feedback") and (r,c) in picks:
             if select_img_scaled is not None:
                 surface.blit(select_img_scaled, rect.topleft)
             else:
                 pygame.draw.rect(surface, PICK_FALLBACK, rect, border_radius=8)
-
-def draw_hint(surface):
-    if state == "reveal":
-        txt = "Memorize the pattern!"
-    elif state == "input":
-        txt = "Click squares that were shown. Press ENTER to submit."
-    elif state == "feedback":
-        txt = "Checking..."
-    elif state == "gameover":
-        txt = "Game Over — Press SPACE to restart."
-    else:
-        txt = ""
-    if txt:
-        hint = font_med.render(txt, True, WHITE)
-        surface.blit(hint, (50, HEIGHT-50))
 
 # -------------------- CHECK ANSWER --------------------
 def check_answer():
@@ -306,16 +275,14 @@ def check_answer():
     correct = targets & picks
     wrong_picked = picks - targets
     missed = targets - picks
-
     feedback.clear()
     for rc in correct:
         feedback[rc] = "correct"
     for rc in wrong_picked | missed:
         feedback[rc] = "wrong"
-
     if wrong_picked or missed:
         mistakes += 1
-        if mistakes >= 2:
+        if mistakes >= 4:
             state = "gameover"
         else:
             state = "feedback"
@@ -328,16 +295,13 @@ def check_answer():
 def main():
     global state, reveal_step_index, reveal_step_started, level_index
     reset_all()
-
     running = True
     while running:
         clock.tick(120)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and state == "input":
-                # Convert click from window coords -> game-surface coords
                 mx, my = event.pos
                 if GAME_RECT.collidepoint(mx, my):
                     sx = (mx - GAME_RECT.x) * WIDTH / GAME_RECT.width
@@ -352,18 +316,15 @@ def main():
                             else:
                                 picks.add((r,c))
                             break
-
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_RETURN and state == "input":
                     check_answer()
-                elif event.key == pygame.K_SPACE and state == "gameover":
+                elif event.key == pygame.K_SPACE and state in ("gameover", "congrats"):  # updated
                     reset_all()
 
-        # --------- RENDER OFFSCREEN GAME SURFACE ---------
+        # --------- RENDER ---------
         game_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         game_surface.fill(BG)
-
-        # draw UI/game to the offscreen surface
         draw_hud(game_surface)
 
         if state == "reveal":
@@ -372,33 +333,35 @@ def main():
                 step = reveal_plan[reveal_step_index]
                 lit = step["cells"]
                 draw_board(game_surface, lit_cells=lit)
-                draw_hint(game_surface)
                 if now - reveal_step_started >= step["time"]:
                     reveal_step_index += 1
                     reveal_step_started = now
             else:
                 state = "input"
                 draw_board(game_surface)
-                draw_hint(game_surface)
 
         elif state == "input":
             draw_board(game_surface)
-            draw_hint(game_surface)
 
         elif state == "feedback":
             draw_board(game_surface)
-            draw_hint(game_surface)
             if reveal_step_started == 0:
                 reveal_step_started = pygame.time.get_ticks()
-            if pygame.time.get_ticks() - reveal_step_started > 2000:
+            if pygame.time.get_ticks() - reveal_step_started > 3500:
                 reveal_step_started = 0
-                if mistakes >= 2:
+                if mistakes >= 4:
                     state = "gameover"
                 else:
                     any_wrong = any(v == "wrong" for v in feedback.values())
-                    if not any_wrong and level_index < len(LEVEL_SHAPES)-1:
-                        level_index += 1
-                    build_round()
+                    if not any_wrong:
+                        # ✅ NEW: Show congratulations screen if final level is cleared
+                        if level_index == len(LEVEL_SHAPES)-1:
+                            state = "congrats"
+                        elif level_index < len(LEVEL_SHAPES)-1:
+                            level_index += 1
+                            build_round()
+                    else:
+                        build_round()
 
         elif state == "gameover":
             draw_board(game_surface)
@@ -409,15 +372,23 @@ def main():
             game_surface.blit(over2, over2.get_rect(center=(WIDTH//2, HEIGHT//2 + 15)))
             game_surface.blit(over3, over3.get_rect(center=(WIDTH//2, HEIGHT//2 + 50)))
 
-        # --------- COMPOSITE TO WINDOW ---------
+        # 🎉 NEW: Congratulations screen
+        elif state == "congrats":
+            draw_board(game_surface)
+            msg1 = font_big.render("🎉 Congratulations! 🎉", True, GREEN)
+            msg2 = font_med.render("You completed all 5 levels!", True, WHITE)
+            msg3 = font_med.render("Press SPACE to restart", True, ACCENT)
+            game_surface.blit(msg1, msg1.get_rect(center=(WIDTH//2, HEIGHT//2 - 20)))
+            game_surface.blit(msg2, msg2.get_rect(center=(WIDTH//2, HEIGHT//2 + 15)))
+            game_surface.blit(msg3, msg3.get_rect(center=(WIDTH//2, HEIGHT//2 + 50)))
+
+        # --------- COMPOSITE ---------
         if bg_photo:
             real_screen.blit(bg_photo, (0, 0))
         else:
             real_screen.fill((0, 0, 0))
-
         scaled = pygame.transform.smoothscale(game_surface, (GAME_RECT.width, GAME_RECT.height))
         real_screen.blit(scaled, GAME_RECT.topleft)
-
         pygame.display.flip()
 
     pygame.quit()
